@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>IMA Archive Viewer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; display: flex; height: 100vh; font-family: Arial, sans-serif; color: #222; }
+    #sidebar { width: 330px; border-right: 1px solid #ccc; display: flex; flex-direction: column; }
+    #search-box { padding: 10px; border-bottom: 1px solid #ccc; }
+    #search { width: 100%; padding: 7px; font-size: 14px; }
+    #list { flex: 1; overflow-y: auto; padding: 10px; }
+    .list-item { padding: 6px 8px; margin-bottom: 6px; border-radius: 4px; cursor: pointer; }
+    .list-item:hover { background: #eef3ff; }
+    .list-item.active { background: #d4e0ff; }
+    .title { font-weight: bold; font-size: 14px; }
+    .sub { font-size: 12px; color: #555; }
+    #content { flex: 1; overflow-y: auto; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }
+    td.key { font-weight: bold; background: #fafafa; width: 200px; }
+    button { padding: 8px 12px; font-size: 14px; margin-top: 10px; cursor: pointer; }
+    .images { margin-top: 15px; display: flex; flex-wrap: wrap; gap: 12px; }
+    .images img { max-width: 320px; border: 1px solid #aaa; }
+  </style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <div id="search-box">
+      <input id="search" type="text" placeholder="Search metadata..." />
+    </div>
+    <div id="list"></div>
+  </div>
+
+  <div id="content">
+    <div id="placeholder">Select a record to view metadata and images.</div>
+  </div>
+
+<script>
+
+const DOCS_JSON = "/IMA/IMA_documents.json";
+const FILES_JSON = "/IMA/IMA_document_files.json";
+const IMAGE_ROOT = "/IMA/ima_files/"; // final path: /IMA/ima_files/<code>/<file.name>
+
+let ALL_DOCS = [];
+let FILTERED = [];
+let FILES_BY_DOC = {};
+let ACTIVE_ID = null;
+
+async function loadData() {
+  const [docsRes, filesRes] = await Promise.all([
+    fetch(DOCS_JSON),
+    fetch(FILES_JSON)
+  ]);
+
+  const docs = await docsRes.json();
+  const files = await filesRes.json();
+
+  // Build mapping: document_id → list of file objects
+  const map = {};
+  files.forEach(f => {
+    if (!map[f.document_id]) map[f.document_id] = [];
+    map[f.document_id].push(f);
+  });
+
+  FILES_BY_DOC = map;
+  ALL_DOCS = docs;
+  FILTERED = docs.slice();
+  renderList();
+}
+
+function renderList() {
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+
+  FILTERED.forEach(doc => {
+    const el = document.createElement("div");
+    el.className = "list-item" + (doc.id === ACTIVE_ID ? " active" : "");
+
+    const t = document.createElement("div");
+    t.className = "title";
+    t.textContent = doc.inv ? `${doc.inv} — ${doc.name}` : doc.name;
+    el.appendChild(t);
+
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    sub.textContent = [doc.date_from?.slice(0,4), doc.source].filter(Boolean).join(" · ");
+    el.appendChild(sub);
+
+    el.onclick = () => { ACTIVE_ID = doc.id; renderList(); renderDetail(doc); };
+
+    list.appendChild(el);
+  });
+}
+
+function renderDetail(doc) {
+  const content = document.getElementById("content");
+  content.innerHTML = "";
+
+  const h = document.createElement("h2");
+  h.textContent = doc.name || "(no title)";
+  content.appendChild(h);
+
+  // Metadata table
+  const table = document.createElement("table");
+  Object.entries(doc).forEach(([k,v]) => {
+    if (v === null || v === "" || k === "sys_period") return;
+    const tr = document.createElement("tr");
+    const key = document.createElement("td");
+    key.className = "key";
+    key.textContent = k;
+    const val = document.createElement("td");
+    val.textContent = typeof v === "object" ? JSON.stringify(v) : v;
+    tr.appendChild(key); tr.appendChild(val);
+    table.appendChild(tr);
+  });
+  content.appendChild(table);
+
+  const files = FILES_BY_DOC[doc.id] || [];
+
+  if (files.length === 0) {
+    const none = document.createElement("div");
+    none.textContent = "No images for this record.";
+    none.style.marginTop = "12px";
+    content.appendChild(none);
+    return;
+  }
+
+  // Load images button
+  const btn = document.createElement("button");
+  btn.textContent = "Show Images";
+  content.appendChild(btn);
+
+  const imgContainer = document.createElement("div");
+  imgContainer.className = "images";
+  content.appendChild(imgContainer);
+
+  let loaded = false;
+  btn.onclick = () => {
+    if (loaded) return;
+    loaded = true;
+    btn.disabled = true;
+    btn.textContent = "Images loaded";
+
+    files.forEach(f => {
+      // FINAL CORRECT RULE:
+      // folder = document.code
+      // file.name = f.name
+      const folder = doc.code;  // e.g. "MU-1-1986-F10696"
+      const url = IMAGE_ROOT + encodeURIComponent(folder) + "/" + encodeURIComponent(f.name);
+
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = f.name;
+      imgContainer.appendChild(img);
+    });
+  };
+}
+
+// SEARCH
+const searchInput = document.getElementById("search");
+searchInput.oninput = () => {
+  const q = searchInput.value.toLowerCase().trim();
+  if (!q) { FILTERED = ALL_DOCS.slice(); renderList(); return; }
+  FILTERED = ALL_DOCS.filter(d => JSON.stringify(d).toLowerCase().includes(q));
+  renderList();
+};
+
+loadData();
+
+</script>
+</body>
+</html>
